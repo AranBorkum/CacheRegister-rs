@@ -8,6 +8,11 @@ version = "0.1.0"
 requires-python = ">=3.8"
 dependencies = []
 
+[project.optional-dependencies]
+django = [
+    "django>=4.2.27",
+]
+
 [tool.maturin]
 # This tells Maturin your python source is at the root (finding 'cache_register/')
 python-source = "."
