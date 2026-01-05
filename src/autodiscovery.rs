@@ -103,7 +103,6 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
     Ok(())
 }
 
-/// Convenience wrapper: specifically looks for "registers.py"
 #[pyfunction]
 #[pyo3(signature = (base_path="."))]
 pub fn autodiscover_registers(py: Python<'_>, base_path: &str) -> PyResult<()> {

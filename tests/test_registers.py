@@ -2,29 +2,7 @@ import pytest
 
 import cache_register
 
-
-class Object:
-    pass
-
-
-@pytest.fixture
-def _clear_global_register() -> None:
-    cache_register.clear_global_register()
-
-
-@pytest.fixture
-def primary_register() -> cache_register.Register:
-    return cache_register.Register("primary")
-
-
-@pytest.fixture
-def secondary_register() -> cache_register.Register:
-    return cache_register.Register("secondary")
-
-
-@pytest.fixture
-def typed_register() -> cache_register.Register[Object]:
-    return cache_register.Register[Object]("typed_register")
+from tests.fixtures import types
 
 
 class TestRegister:
@@ -86,10 +64,10 @@ class TestRegister:
     def test_typed_register_only_allows_one_type(
         self,
         _clear_global_register: None,
-        typed_register: cache_register.Register[Object],
+        typed_register: cache_register.Register[types.Object],
     ) -> None:
         @typed_register.register("b")
-        class B(Object):
+        class B(types.Object):
             pass
 
         with pytest.raises(cache_register.InvalidObjectInRegister):
