@@ -16,22 +16,27 @@ fn is_ignored(entry: &DirEntry) -> bool {
     false
 }
 
-/// The core logic: Scans `base_path` for `target_filename` and imports found modules.
+/// The core logic: Scans `base_path` for `target_filename` (ignoring .py extension) and imports found modules.
 fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> PyResult<()> {
     // 1. Setup Python import tools
     let importlib = PyModule::import(py, "importlib")?;
     let sys = PyModule::import(py, "sys")?;
 
-    // 2. Ensure base_path is in sys.path so imports work correctly
+    // 2. Ensure base_path is in sys.path
     let path_list: Bound<'_, PyList> = sys.getattr("path")?.extract()?;
     let base_path_obj = base_path.into_pyobject(py)?;
 
-    // Only add if not already present
     if !path_list.contains(&base_path_obj)? {
         path_list.insert(0, &base_path_obj)?;
     }
 
     let root = Path::new(base_path);
+
+    // Normalize target: "registers.py" -> "registers", "registers" -> "registers"
+    let target_stem = target_filename
+        .strip_suffix(".py")
+        .unwrap_or(target_filename);
+
     let walker = WalkDir::new(root).into_iter();
 
     // 3. Fast Traversal
@@ -41,13 +46,21 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
             Err(_) => continue,
         };
 
-        // 4. Check strictly for the target filename
-        if entry.file_name() == target_filename {
-            let path = entry.path();
+        // Skip directories, we only care about files
+        if !entry.file_type().is_file() {
+            continue;
+        }
 
-            // Optional: Print found path for debugging, or remove for production
-            // println!("Found: {}", path.display());
+        let path = entry.path();
 
+        // 4. CHECK:
+        // A) Does it have a .py extension?
+        // B) Does the stem match our target?
+        //    (e.g. file "registers.py" matches target "registers")
+        let is_py_file = path.extension().map_or(false, |ext| ext == "py");
+        let stems_match = path.file_stem().map_or(false, |s| s == target_stem);
+
+        if is_py_file && stems_match {
             // 5. Convert file path to module path
             if let Ok(stripped) = path.strip_prefix(root) {
                 let mut module_parts = Vec::new();
@@ -57,7 +70,7 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
                     }
                 }
 
-                // Strip the ".py" extension from the filename (e.g. "registers.py" -> "registers")
+                // Strip the ".py" extension from the last part for the import system
                 if let Some(last) = module_parts.last_mut() {
                     if let Some(stripped_filename) = last.strip_suffix(".py") {
                         *last = stripped_filename;
@@ -76,7 +89,6 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
             }
         }
     }
-
     Ok(())
 }
 
