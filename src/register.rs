@@ -20,29 +20,39 @@ pub fn clear_global_register() {
 
 #[pyfunction]
 pub fn get_all_registers(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    // 1. Lock the global registry
     let global = GLOBAL_REGISTER.lock().unwrap();
-
-    // 2. Create the main Python dictionary
     let result_dict = PyDict::new(py);
 
-    // 3. Iterate over the Rust HashMap: RegisterName -> InnerMap
     for (reg_name, entries) in global.iter() {
         let sub_dict = PyDict::new(py);
-
-        // 4. Iterate over the inner map: Key -> PythonObject
         for (key, obj) in entries.iter() {
-            // Insert the object into the sub-dictionary.
-            // We use clone_ref(py) to give the dictionary a new reference to the object.
             sub_dict.set_item(key, obj.clone_ref(py))?;
         }
-
-        // Add the sub-dictionary to the main dictionary
         result_dict.set_item(reg_name, sub_dict)?;
     }
-
-    // 5. Return the dictionary as a generic Python Object
     Ok(result_dict.into_any().unbind())
+}
+
+// --- NEW HELPER STRUCT ---
+#[pyclass]
+struct RegisterFactory {
+    expected_type: Py<PyAny>,
+}
+
+#[pymethods]
+impl RegisterFactory {
+    #[pyo3(signature = (name))]
+    fn __call__(&self, py: Python<'_>, name: String) -> PyResult<Register> {
+        // Initialize global state
+        let mut global = GLOBAL_REGISTER.lock().unwrap();
+        global.entry(name.clone()).or_insert_with(HashMap::new);
+
+        // Create the Register with the constraints from the factory
+        Ok(Register {
+            name,
+            expected_type: Some(self.expected_type.clone_ref(py)),
+        })
+    }
 }
 
 #[pyclass]
@@ -77,23 +87,50 @@ impl Register {
             let py = obj.py();
 
             if let Some(ref expected) = expected_type {
-                let expected_bound: &Bound<'_, PyAny> = expected.bind(py);
-                if !obj.is_instance(expected_bound)? {
+                let expected_bound = expected.bind(py);
+
+                // 1. Strict Check: Is it an instance? (e.g. A())
+                let mut is_valid = obj.is_instance(expected_bound)?;
+
+                // 2. Permissive Check: If it's a class, is it a subclass? (e.g. class B(A))
+                // Only run this if the instance check failed.
+                if !is_valid {
+                    // Check if the object being registered is itself a Type (Class)
+                    if let Ok(obj_as_type) = obj.cast::<PyType>() {
+                        // We use Python's built-in issubclass checks
+                        // (handles tuples of types in 'expected' correctly)
+                        let builtins = PyModule::import(py, "builtins")?;
+
+                        // We wrap this in Result in case 'expected' is not a valid class (e.g. 5)
+                        // which would cause issubclass to raise a TypeError.
+                        if let Ok(res) =
+                            builtins.call_method1("issubclass", (obj_as_type, expected_bound))
+                        {
+                            if res.is_truthy()? {
+                                is_valid = true;
+                            }
+                        }
+                    }
+                }
+
+                if !is_valid {
                     let type_name = expected_bound.repr()?.to_string_lossy().into_owned();
+                    let obj_repr = obj.repr()?.to_string_lossy().into_owned();
+
                     return Err(PyErr::new::<InvalidObjectInRegister, _>(format!(
-                        "Attempted to register object '{}' in register '{}'. This register only accepts '{}' types.",
-                        obj, name, type_name
+                        "Attempted to register object '{}' in register '{}'. This register only accepts '{}' types or subclasses.",
+                        obj_repr, name, type_name
                     )));
                 }
             }
 
+            // ... (rest of the function: duplicate check and insert) ...
             let mut global = GLOBAL_REGISTER.lock().unwrap();
             let sub_register = global
                 .get_mut(&name)
                 .expect("Register name not initialized");
 
             if sub_register.contains_key(&key) {
-                // This now works because create_exception! generates a proper exception type
                 return Err(PyErr::new::<DuplicateRegisterEntry, _>(format!(
                     "Key '{}' already exists in register '{}'",
                     key, name
@@ -118,5 +155,17 @@ impl Register {
             Some(obj) => Ok(obj.clone_ref(py)),
             None => Ok(py.None()),
         }
+    }
+
+    // --- MODIFIED CLASS GETITEM ---
+    #[classmethod]
+    fn __class_getitem__(
+        _cls: &Bound<'_, PyType>,
+        item: &Bound<'_, PyAny>,
+    ) -> PyResult<RegisterFactory> {
+        // Return the factory that captures the type 'item' (e.g., int, MyClass)
+        Ok(RegisterFactory {
+            expected_type: item.clone().unbind(),
+        })
     }
 }

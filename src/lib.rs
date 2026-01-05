@@ -5,7 +5,7 @@ mod register;
 
 // --- Module Definition ---
 #[pymodule]
-fn _cache_register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn cache_register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<register::Register>()?;
     m.add(
         "DuplicateRegisterEntry",

@@ -1,19 +1,19 @@
-from _cache_register import (
+from cache_register.cache_register import (
     Register,
+    get_all_registers,
+    clear_global_register,
     DuplicateRegisterEntry,
     InvalidObjectInRegister,
-    clear_global_register,
-    get_all_registers,
     autodiscover_registers,
     autoregister_registers,
 )
 
 __all__ = [
     "Register",
+    "get_all_registers",
+    "clear_global_register",
     "DuplicateRegisterEntry",
     "InvalidObjectInRegister",
-    "clear_global_register",
-    "get_all_registers",
     "autodiscover_registers",
     "autoregister_registers",
 ]

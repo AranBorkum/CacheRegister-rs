@@ -1,28 +1,31 @@
-use crate::register::GLOBAL_REGISTER;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyModule};
 use std::path::Path;
 use walkdir::{DirEntry, WalkDir};
 
-// Helper to skip hidden/heavy directories efficiently
+use crate::register::GLOBAL_REGISTER;
+
 fn is_ignored(entry: &DirEntry) -> bool {
     let name = entry.file_name().to_str().unwrap_or("");
     if entry.file_type().is_dir() {
         return name.starts_with('.')
             || name == "__pycache__"
             || name == "node_modules"
-            || name == "venv";
+            || name == "venv"
+            || name == "env";
     }
     false
 }
 
-/// The core logic: Scans `base_path` for `target_filename` (ignoring .py extension) and imports found modules.
+/// Helper: Checks if a directory is a valid Python package (has __init__.py)
+fn is_python_package(dir_path: &Path) -> bool {
+    dir_path.join("__init__.py").exists()
+}
+
 fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> PyResult<()> {
-    // 1. Setup Python import tools
     let importlib = PyModule::import(py, "importlib")?;
     let sys = PyModule::import(py, "sys")?;
 
-    // 2. Ensure base_path is in sys.path
     let path_list: Bound<'_, PyList> = sys.getattr("path")?.extract()?;
     let base_path_obj = base_path.into_pyobject(py)?;
 
@@ -32,36 +35,40 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
 
     let root = Path::new(base_path);
 
-    // Normalize target: "registers.py" -> "registers", "registers" -> "registers"
+    // Normalize target: "registers.py" -> "registers"
     let target_stem = target_filename
         .strip_suffix(".py")
         .unwrap_or(target_filename);
+    // Construct the expected file name: "registers.py"
+    let target_file_name = format!("{}.py", target_stem);
 
     let walker = WalkDir::new(root).into_iter();
 
-    // 3. Fast Traversal
     for entry in walker.filter_entry(|e| !is_ignored(e)) {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
         };
 
-        // Skip directories, we only care about files
-        if !entry.file_type().is_file() {
-            continue;
+        let path = entry.path();
+        let file_name = entry.file_name().to_str().unwrap_or("");
+
+        // --- LOGIC: Determine if this entry is a match ---
+        let mut is_match = false;
+
+        // Case 1: File Match (e.g., "registers.py")
+        if entry.file_type().is_file() && file_name == target_file_name {
+            is_match = true;
+        }
+        // Case 2: Package Match (e.g., directory "registers/" containing "__init__.py")
+        else if entry.file_type().is_dir() && file_name == target_stem {
+            if is_python_package(path) {
+                is_match = true;
+            }
         }
 
-        let path = entry.path();
-
-        // 4. CHECK:
-        // A) Does it have a .py extension?
-        // B) Does the stem match our target?
-        //    (e.g. file "registers.py" matches target "registers")
-        let is_py_file = path.extension().map_or(false, |ext| ext == "py");
-        let stems_match = path.file_stem().map_or(false, |s| s == target_stem);
-
-        if is_py_file && stems_match {
-            // 5. Convert file path to module path
+        if is_match {
+            // Calculate module path
             if let Ok(stripped) = path.strip_prefix(root) {
                 let mut module_parts = Vec::new();
                 for component in stripped.components() {
@@ -70,16 +77,19 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
                     }
                 }
 
-                // Strip the ".py" extension from the last part for the import system
-                if let Some(last) = module_parts.last_mut() {
-                    if let Some(stripped_filename) = last.strip_suffix(".py") {
-                        *last = stripped_filename;
+                // If it's a file, we must strip the ".py" extension from the last component
+                // If it's a directory, the directory name IS the module name, so we leave it alone.
+                if entry.file_type().is_file() {
+                    if let Some(last) = module_parts.last_mut() {
+                        if let Some(stripped_filename) = last.strip_suffix(".py") {
+                            *last = stripped_filename;
+                        }
                     }
                 }
 
                 let module_name = module_parts.join(".");
 
-                // 6. Import the module
+                // Import
                 if let Err(e) = importlib.call_method1("import_module", (module_name.clone(),)) {
                     eprintln!(
                         "Rust Autodiscover Error: Failed to import '{}': {}",
@@ -89,6 +99,7 @@ fn scan_and_import(py: Python<'_>, base_path: &str, target_filename: &str) -> Py
             }
         }
     }
+
     Ok(())
 }
 

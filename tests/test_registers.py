@@ -3,6 +3,10 @@ import pytest
 import cache_register
 
 
+class Object:
+    pass
+
+
 @pytest.fixture
 def _clear_global_register() -> None:
     cache_register.clear_global_register()
@@ -16,6 +20,11 @@ def primary_register() -> cache_register.Register:
 @pytest.fixture
 def secondary_register() -> cache_register.Register:
     return cache_register.Register("secondary")
+
+
+@pytest.fixture
+def typed_register() -> cache_register.Register[Object]:
+    return cache_register.Register[Object]("typed_register")
 
 
 class TestRegister:
@@ -73,3 +82,18 @@ class TestRegister:
                 pass
 
         assert e.value.args[0] == "Key 'a' already exists in register 'primary'"
+
+    def test_typed_register_only_allows_one_type(
+        self,
+        _clear_global_register: None,
+        typed_register: cache_register.Register[Object],
+    ) -> None:
+        @typed_register.register("b")
+        class B(Object):
+            pass
+
+        with pytest.raises(cache_register.InvalidObjectInRegister):
+
+            @typed_register.register("c")
+            class C:
+                pass

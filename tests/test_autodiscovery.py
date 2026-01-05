@@ -11,4 +11,3 @@ def test_autodiscovery():
     handlers = cache_register.get_all_registers().get("handlers")
     assert handlers is not None
     assert "a" in handlers
-

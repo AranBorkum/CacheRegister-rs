@@ -14,8 +14,9 @@ django = [
 ]
 
 [tool.maturin]
-# This tells Maturin your python source is at the root (finding 'cache_register/')
 python-source = "."
+features = ["pyo3/extension-module"]
+module-name = "cache_register.cache_register"
 
 [dependency-groups]
 dev = [
